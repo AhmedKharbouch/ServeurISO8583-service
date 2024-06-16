@@ -1,9 +1,5 @@
 package com.example.isoserveurservice.iso;
 
-import com.example.isoserveurservice.entities.Isomsg;
-import com.example.isoserveurservice.services.IsomsgService;
-import com.example.isoserveurservice.services.IsomsgServiceImpl;
-import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jpos.core.Configurable;
 import org.jpos.core.Configuration;
@@ -13,11 +9,9 @@ import org.jpos.q2.iso.QMUX;
 import org.jpos.util.NameRegistrar;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
-import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.io.IOException;
 import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
@@ -25,11 +19,6 @@ import java.util.Map;
 @Slf4j
 @CrossOrigin("*")
 public class SwitchRequestListener implements ISORequestListener , Configurable{
-
-
-    @Autowired
-    IsomsgService isomsgService;
-
 
     @Bean
     public Q2 q2(){
