@@ -1,6 +1,5 @@
 package com.example.isoserveurservice.entities;
 
-import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -9,7 +8,11 @@ import javax.persistence.Entity;
 import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
-import java.util.Date;
+
+/**
+ * Même table que l'entité Isomsg du client : les types doivent rester identiques
+ * (expireDate en String "yyyy-MM") sinon les deux services se battent sur le schéma.
+ */
 @Entity
 @Data
 @AllArgsConstructor
@@ -19,8 +22,7 @@ public class Isomsg {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
     String cardNumber;
-    @JsonFormat(pattern="yyyy-MM")
-    Date expireDate ;
+    String expireDate;
     double amount;
     String code_Currency;
     String date_transaction;

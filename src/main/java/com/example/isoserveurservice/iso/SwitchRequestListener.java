@@ -1,184 +1,94 @@
 package com.example.isoserveurservice.iso;
 
-import com.example.isoserveurservice.entities.Isomsg;
-import com.example.isoserveurservice.services.IsomsgService;
-import com.example.isoserveurservice.services.IsomsgServiceImpl;
-import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jpos.core.Configurable;
-import org.jpos.core.Configuration;
-import org.jpos.iso.*;
-import org.jpos.q2.Q2;
-import org.jpos.q2.iso.QMUX;
+import org.jpos.iso.ISOException;
+import org.jpos.iso.ISOMsg;
+import org.jpos.iso.ISORequestListener;
+import org.jpos.iso.ISOSource;
+import org.jpos.iso.ISOUtil;
 import org.jpos.util.NameRegistrar;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Bean;
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
-import java.sql.*;
-import java.util.HashMap;
-import java.util.Map;
-@RestController
+import java.math.BigDecimal;
+import java.util.function.Function;
+
+/**
+ * Autorise les demandes 0200 : recherche la carte, compare le montant demandé
+ * au solde et répond 0210 avec le code réponse (champ 39) et l'état (champ 125).
+ */
 @Slf4j
-@CrossOrigin("*")
-public class SwitchRequestListener implements ISORequestListener , Configurable{
+public class SwitchRequestListener implements ISORequestListener {
 
+    /** Nom sous lequel JposConfig publie la recherche de solde (PAN -> solde, null si inconnue). */
+    public static final String BALANCE_LOOKUP = "card-balance-lookup";
 
-    @Autowired
-    IsomsgService isomsgService;
+    static final String RC_APPROVED = "00";
+    static final String RC_INVALID_CARD = "14";
+    static final String RC_INSUFFICIENT_FUNDS = "51";
+    static final String RC_FORMAT_ERROR = "30";
+    static final String RC_SYSTEM_ERROR = "96";
 
-
-    @Bean
-    public Q2 q2(){
-        Q2 q2 = new Q2();
-        q2.start();
-        return q2;
-
-        }
-
-    private Map<String,String> routeTable;
-
-
-    @Override
-    public void setConfiguration(Configuration configuration) {
-        routeTable= new HashMap<>();
-        routeTable.put("8001", "server_1");
-        routeTable.put("8002", "server_2");
-    }
-
-    public String getIsoMsg(String s){
-       String var="";
-        try {
-            Connection conn = DriverManager.getConnection("jdbc:mysql://localhost:3306/Iso_BASE","root","");
-            PreparedStatement pstm  = conn.prepareStatement( "SELECT card_number, amount, code_currency " +
-                    "FROM isomsg WHERE card_number=?");
-
-            pstm.setString(1,s);
-
-            ResultSet rs    = pstm.executeQuery();
-
-
-            while (rs.next()) {
-                System.out.println(rs.getString("amount"));
-                var= rs.getString("amount");
-            }
-
-
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-
-        return var;
-    }
-  private MUX mux;
     @Override
     public boolean process(ISOSource isoSource, ISOMsg isoMsg) {
         try {
-            mux = QMUX.getMUX("server_1-mux");
-        } catch (NameRegistrar.NotFoundException e) {
-            throw new RuntimeException(e);
-        }
-        /*try {
-            if (isoMsg.getMTI().equals("0200")) {*/
-                ISOMsg reply = (ISOMsg) isoMsg.clone();
-                reply.set(39, "te");
-                System.out.println(reply.getString(11));
-        try {
+            if (!"0200".equals(isoMsg.getMTI())) {
+                return false; // laisse d'autres listeners / la file "unhandled" s'en occuper
+            }
+
+            ISOMsg reply = (ISOMsg) isoMsg.clone();
             reply.setResponseMTI();
-        } catch (ISOException e) {
-            throw new RuntimeException(e);
-        }
-        System.out.println("isoMsg = " + isoMsg);
+            authorize(isoMsg, reply);
 
-                System.out.println(isoSource.isConnected());
-        ISOMsg reply1 = null;
-        try {
-            reply1 = mux.request(reply, 100);
-        } catch (ISOException e) {
-            throw new RuntimeException(e);
+            log.info("0200 STAN={} PAN={} -> 39={} 125={}",
+                    isoMsg.getString(11), ISOUtil.protect(isoMsg.getString(2)),
+                    reply.getString(39), reply.getString(125));
+
+            isoSource.send(reply);
+            return true;
+        } catch (ISOException | IOException e) {
+            log.error("Erreur lors du traitement du message ISO", e);
+            return false;
         }
-        System.out.println("reply1 = " + reply1);
-           /* }
-        } catch (ISOException e) {
-            throw new RuntimeException(e);
-        }*/
-        return false;
     }
 
- /*   @Override
-    public boolean process(ISOSource isoSource, ISOMsg isoMsg) {
+    private void authorize(ISOMsg request, ISOMsg reply) throws ISOException {
+        String pan = request.getString(2);
+        String amountField = request.getString(4);
 
-
-        *//*try {
-            if(isoMsg.getMTI().equals("0200")){
-                Thread t = new Thread(new Processor(isoSource,isoMsg));
-                t.start();
-                return true;
-            }
-        } catch (ISOException e) {
-            e.printStackTrace();
+        if (pan == null || amountField == null || !amountField.matches("\\d{1,12}")) {
+            setResult(reply, RC_FORMAT_ERROR, "format_invalide");
+            return;
         }
-        return false;*//*
 
-
-
+        Double cardBalance;
         try {
-
-            if (isoMsg.getMTI().equals("0200")) {
-                ISOMsg reply = (ISOMsg) isoMsg.clone();
-                reply.setResponseMTI();
-
-                String card_num=reply.getString(2);
-                String expirydate=reply.getString(14);
-                //function to get amount
-
-                reply.set(39, "00");
-
-                if(getIsoMsg(card_num).equals("")){
-                    reply.set(125,"introuvable");
-                }else {
-                    String s1=reply.getString(4);
-                    String s2=getIsoMsg(card_num);
-
-                    double v = Double.parseDouble(s1);
-                    double v1 = Double.parseDouble(s2);
-                    System.out.println("value of amount iso*******: "+v);
-                    System.out.println("value of amount database *******: "+v1);
-
-
-                    if (v<=v1) {
-                        reply.set(125, "success");
-                    } else {
-                        reply.set(125, "insuffisant");
-                    }
-                }
-
-
-
-
-                isoSource.send(reply);
-                return true;
-            }
-            // send request to server B
-            MUX mux = (MUX) NameRegistrar.getIfExists("server_1-mux");
-            ISOMsg reply = mux.request(isoMsg, 10 * 1000);
-            if (reply != null) {
-                System.out.println(new String(reply.pack()));
-                reply.set(125, "RESPONSE FROM SERVER ");
-                isoSource.send(reply);
-            }
-        } catch (ISOException | IOException e) {
-            e.printStackTrace();
+            @SuppressWarnings("unchecked")
+            Function<String, Double> lookup = (Function<String, Double>) NameRegistrar.get(BALANCE_LOOKUP);
+            cardBalance = lookup.apply(pan);
+        } catch (NameRegistrar.NotFoundException | RuntimeException e) {
+            log.error("Erreur d'accès à la base pour PAN={}", ISOUtil.protect(pan), e);
+            setResult(reply, RC_SYSTEM_ERROR, "erreur_systeme");
+            return;
         }
-        return false;
-    }*/
 
+        if (cardBalance == null) {
+            setResult(reply, RC_INVALID_CARD, "introuvable");
+            return;
+        }
+
+        // Champ 4 = montant en unités mineures (centimes) sur 12 chiffres
+        BigDecimal requested = new BigDecimal(amountField).movePointLeft(2);
+        BigDecimal balance = BigDecimal.valueOf(cardBalance);
+
+        if (requested.compareTo(balance) <= 0) {
+            setResult(reply, RC_APPROVED, "success");
+        } else {
+            setResult(reply, RC_INSUFFICIENT_FUNDS, "insuffisant");
+        }
+    }
+
+    private static void setResult(ISOMsg reply, String responseCode, String state) throws ISOException {
+        reply.set(39, responseCode);
+        reply.set(125, state);
+    }
 }
-
-
-
-
-
